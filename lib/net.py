@@ -1,14 +1,15 @@
+import concurrent.futures
 import logging
 import os
 import random
 import re
-import urllib
-from concurrent.futures import ThreadPoolExecutor, wait
-from urllib import request
+import time
+import urllib.error
+import urllib.request
 
 from .config import Config
 
-with open(Config.ua_file) as f:
+with open(Config.UA_FILE) as f:
     _ua = list(u.strip() for u in f.readlines())
 
 
@@ -25,28 +26,30 @@ def save_file(localpath, data):
 
 
 def load_file(localpath):
-    with open(localpath, 'rb') as f:
-        return f.read()
+    if os.path.exists(localpath):
+        with open(localpath, 'rb') as f:
+            return f.read()
+    else:
+        return None
 
 
 def get(netpath, retry=3):
     for _ in range(retry):
         try:
-            req = request.Request(netpath, headers={'User-Agent': rand_ua()})
-            data = request.urlopen(req).read()
-            if data:
-                return data
-        except Exception as e:
-            logging.debug('Request Exception: ' + str(e))
+            req = urllib.request.Request(
+                netpath, headers={'User-Agent': rand_ua()})
+            with urllib.request.urlopen(req, timeout=Config.TIMEOUT) as conn:
+                return conn.read()
+        except urllib.error.HTTPError as err:
+            logging.debug(f'get {netpath} err: {err}')
     return None
 
 
 def download(localpath, netpath):
+    logging.debug('download ' + netpath)
     data = get(netpath)
-    if not data:
-        return None
-
-    save_file(localpath, data)
+    if data:
+        save_file(localpath, data)
     return data
 
 
@@ -54,15 +57,12 @@ def load_or_get(basepair, path, cover=False):
     localbase, netbase = basepair
     localpath = os.path.join(localbase, path)
     netpath = f"{netbase.rstrip('/')}/{path.lstrip('/')}"
-    if cover or not os.path.exists(localpath):
-        return download(localpath, netpath)
-    else:
-        return load_file(localpath)
 
-    if os.path.exists(localpath):
-        return load_file(localpath)
-    else:
-        return None
+    ret = None
+    if cover or not os.path.exists(localpath):
+        ret = download(localpath, netpath)
+
+    return ret or load_file(localpath)
 
 
 def isdirlist(url):
@@ -75,36 +75,38 @@ def isdirlist(url):
     ]
     data = get(url)
     if data:
+        data = data.decode('utf-8', 'replace')
         for key in keywords:
             if key in data:
                 return True
     return False
 
 
-dirlist_ptn = re.compile(r'<td>\s*<a href="(.+?)"', re.M | re.I)
-
-
-def dirlist_download(basepair):
-    dirlist_ptn = re.compile(r'<td>\s*<a href="(.+?)"', re.M | re.I)
-    executor = ThreadPoolExecutor(5)
+def dirlist_spider(basepair):
+    dirlist_ptn = re.compile(br'<td>\s*<a href="([^"]+)', re.M | re.I)
     localbase, netbase = basepair
     localbase = localbase.rstrip('/')
     netbase = netbase.rstrip('/')
-    tasks = []
+    with concurrent.futures.ThreadPoolExecutor(Config.THREADS) as executor:
+        tasks = []
 
-    def recursive(path='/'):
-        localpath = os.path.join(localbase, path.strip('/'))
-        netpath = f"{netbase}/{path.lstrip('/')}"
-        if path.endswith('/'):
-            os.makedirs(localpath, exist_ok=True)
-            page = get(netpath)
-            files = dirlist_ptn.findall(page)
-            for f in files:
-                if "../" == f or f.startswith('/'):
-                    continue
-                recursive(f'{path}{f}')
-        else:
-            tasks.append(executor.submit(download, (localpath, netpath)))
+        def recursive(path='/'):
+            localpath = os.path.join(localbase, path.strip('/'))
+            netpath = f"{netbase}/{path.lstrip('/')}"
+            if path.endswith('/'):
+                logging.debug('detect path: ' + path)
+                os.makedirs(localpath, exist_ok=True)
+                page = get(netpath)
+                if page:
+                    for _f in dirlist_ptn.findall(page):
+                        _f = _f.decode('utf-8', 'replace')
+                        if '../' == _f or _f.startswith('/'):
+                            continue
+                        recursive(f'{path}{_f}')
+            else:
+                logging.debug('detect file: ' + path)
+                tasks.append(executor.submit(download, localpath, netpath))
+                time.sleep(0.2)
 
-    recursive()
-    wait(tasks)
+        recursive()
+        concurrent.futures.wait(tasks)

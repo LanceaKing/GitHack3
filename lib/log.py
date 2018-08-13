@@ -5,7 +5,6 @@ import threading
 import time
 from getpass import getpass
 from logging import critical, debug, error, info, warning
-from logging.handlers import TimedRotatingFileHandler
 
 try:
     import colorlog
@@ -13,50 +12,43 @@ except ImportError:
     colorlog = None
 
 __all__ = [
-    'critical',
-    'debug',
-    'error',
-    'info',
-    'warning',
-    'success',
-    'failure',
-    'basicConfig',
-    'RunningBar'
+    'critical', 'debug', 'error', 'info', 'warning', 'success', 'failure',
+    'basicConfig', 'RunningBar'
 ]
 
 SUCCESS = logging.INFO + 5
 FAILURE = logging.WARNING + 5
 
+# 2 handlers: console, file
+console = logging.StreamHandler()
+file = None
+
+# 3 formatters: no_color, color, verbose
+no_color = logging.Formatter('[%(levelname)s] %(message)s')
+
+if not colorlog is None:
+    color = colorlog.ColoredFormatter(
+        '[%(log_color)s%(levelname)s%(reset)s] %(message)s')
+    color.log_colors = {
+        'DEBUG': 'bold_red',
+        'INFO': 'bold_blue',
+        'SUCCESS': 'bold_green',
+        'WARNING': 'bold_yellow',
+        'FAILURE': 'bold_red',
+        'ERROR': 'bg_red',
+        'CRITICAL': 'bg_red'
+    }
+else:
+    color = no_color
+
+verbose = logging.Formatter(
+    '%(asctime)s [%(levelname)s] %(module)s:%(lineno)s/%(process)d/%(thread)d : %(message)s'
+)
+
 
 def basicConfig(is_no_color=False, log_file_path=None, level=logging.INFO):
-
-    # 2 handlers: console, file
-    console = logging.StreamHandler()
-
     if log_file_path:
-        file = TimedRotatingFileHandler(log_file_path, encoding='utf-8')
-        file.suffix += '.log'
-
-    # 3 formatters: no_color, color, verbose
-    no_color = logging.Formatter('[%(levelname)s] %(message)s')
-
-    if not colorlog is None:
-        color = colorlog.ColoredFormatter(
-            '[%(log_color)s%(levelname)s%(reset)s] %(message)s')
-        color.log_colors = {
-            'DEBUG': 'bold_red',
-            'INFO': 'bold_blue',
-            'SUCCESS': 'bold_green',
-            'WARNING': 'bold_yellow',
-            'FAILURE': 'bold_red',
-            'ERROR': 'bg_red',
-            'CRITICAL': 'bg_red'
-        }
-    else:
-        color = no_color
-
-    verbose = logging.Formatter(
-        '%(asctime)s [%(levelname)s] %(module)s:%(lineno)s/%(process)d/%(thread)d : %(message)s')
+        file = logging.FileHandler(log_file_path, encoding='utf-8')
 
     logging.addLevelName(SUCCESS, 'SUCCESS')
     logging.addLevelName(FAILURE, 'FAILURE')
@@ -121,10 +113,10 @@ class RunningBar(threading.Thread):
         if self.move:
             while True:
                 frame = next(self.anime)
-                logging._acquireLock()
-                print(f'[{self.name}] {self.msg} {frame}',
-                      end='\r', flush=True)
-                logging._releaseLock()
+                console.acquire()
+                print(
+                    f'[{self.name}] {self.msg} {frame}', end='\r', flush=True)
+                console.release()
                 if self._stop_event.wait(0.1):
                     break
         else:

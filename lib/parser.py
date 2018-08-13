@@ -1,11 +1,21 @@
 import binascii
 import collections
-import logging
 import mmap
 import re
 import struct
-import sys
-import zlib
+
+
+def find_sha1(text):
+    if isinstance(text, bytes):
+        text = text.decode('utf-8', 'replace')
+    elif not isinstance(text, str):
+        return set()
+    sha1_ptn = re.compile(r'[\da-f]{40}')
+    ret = set(sha1_ptn.findall(text))
+    allz = '0' * 40
+    if allz in ret:
+        ret.remove(allz)
+    return ret
 
 
 def parse_tree(tree):
@@ -13,7 +23,7 @@ def parse_tree(tree):
 
     assert header.startswith(b'tree '), 'not git tree data'
     #                    mode    name          sha1
-    ptn = re.compile(br'(\d{6}) ([^\x00]*)\x00(.{20})', re.M | re.S)
+    ptn = re.compile(br'(\d+) ([^\x00]*)\x00(.{20})', re.M | re.S)
 
     for r in ptn.findall(body):
         entry = collections.OrderedDict()
@@ -51,6 +61,7 @@ def parse_blob(blob):
     return collections.OrderedDict(data=body)
 
 
+# https://github.com/git/git/blob/master/Documentation/technical/index-format.txt
 def parse_index(filename, pretty=True):
     with open(filename, 'rb') as o:
         f = mmap.mmap(o.fileno(), 0, access=mmap.ACCESS_READ)
@@ -88,7 +99,7 @@ def parse_index(filename, pretty=True):
             entry['ctime_nanoseconds'] = read('I')
             if pretty:
                 entry['ctime'] = entry['ctime_seconds']
-                entry['ctime'] += entry['ctime_nanoseconds'] / 1000000000
+                entry['ctime'] += entry['ctime_nanoseconds'] / 10e8
                 del entry['ctime_seconds']
                 del entry['ctime_nanoseconds']
 
@@ -96,7 +107,7 @@ def parse_index(filename, pretty=True):
             entry['mtime_nanoseconds'] = read('I')
             if pretty:
                 entry['mtime'] = entry['mtime_seconds']
-                entry['mtime'] += entry['mtime_nanoseconds'] / 1000000000
+                entry['mtime'] += entry['mtime_nanoseconds'] / 10e8
                 del entry['mtime_seconds']
                 del entry['mtime_nanoseconds']
 
@@ -132,14 +143,11 @@ def parse_index(filename, pretty=True):
             if entry['extended'] and (index['version'] == 3):
                 entry['extra-flags'] = read('H')
                 # 1-bit reserved
-                entry['reserved'] = bool(entry['extra-flags'] &
-                                         (0b10000000 << 8))
+                entry['reserved'] = bool(entry['extra-flags'] & (0b10000000 << 8))
                 # 1-bit skip-worktree
-                entry['skip-worktree'] = bool(entry['extra-flags'] &
-                                              (0b01000000 << 8))
+                entry['skip-worktree'] = bool(entry['extra-flags'] & (0b01000000 << 8))
                 # 1-bit intent-to-add
-                entry['intent-to-add'] = bool(entry['extra-flags'] &
-                                              (0b00100000 << 8))
+                entry['intent-to-add'] = bool(entry['extra-flags'] & (0b00100000 << 8))
                 # 13-bits unused
                 # used = entry['extra-flags'] & (0b11100000 << 8)
                 # check(not used, 'Expected unused bits in extra-flags')
